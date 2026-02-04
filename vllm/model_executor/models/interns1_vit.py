@@ -14,6 +14,8 @@ import torch.nn as nn
 from transformers import PretrainedConfig
 from transformers.utils import torch_int
 
+from vllm.compilation.backends import set_model_tag
+from vllm.compilation.decorators import support_torch_compile
 from vllm.model_executor.layers.activation import get_act_fn
 from vllm.model_executor.layers.attention import MMEncoderAttention
 from vllm.model_executor.layers.conv import Conv2dLayer
@@ -21,6 +23,7 @@ from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.model_executor.layers.linear import ColumnParallelLinear, RowParallelLinear
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
+from vllm.model_executor.models.vision import should_torch_compile_mm_vit
 
 NORM2FN = {
     "rms_norm": RMSNorm,
@@ -275,6 +278,10 @@ class InternS1VisionMLP(nn.Module):
         return hidden_states
 
 
+@support_torch_compile(
+    dynamic_arg_dims={"hidden_states": 0},
+    enable_if=should_torch_compile_mm_vit,
+)
 class InternS1VisionLayer(nn.Module):
     def __init__(
         self,
@@ -361,17 +368,18 @@ class InternS1VisionEncoder(nn.Module):
         else:
             num_hidden_layers = num_hidden_layers_override
 
-        self.layer = nn.ModuleList(
-            [
-                InternS1VisionLayer(
-                    config,
-                    quant_config,
-                    num_dummy_heads=num_dummy_heads,
-                    prefix=f"{prefix}.layer.{layer_idx}",
-                )
-                for layer_idx in range(num_hidden_layers)
-            ]
-        )
+        with set_model_tag("InternS1VisionLayer", is_encoder=True):
+            self.layer = nn.ModuleList(
+                [
+                    InternS1VisionLayer(
+                        config=config,
+                        quant_config=quant_config,
+                        num_dummy_heads=num_dummy_heads,
+                        prefix=f"{prefix}.layer.{layer_idx}",
+                    )
+                    for layer_idx in range(num_hidden_layers)
+                ]
+            )
 
     def forward(self, inputs_embeds: torch.Tensor):
         hidden_states = inputs_embeds

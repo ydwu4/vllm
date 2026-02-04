@@ -23,6 +23,7 @@ from transformers.models.internvl.video_processing_internvl import (
 
 from vllm.config import VllmConfig
 from vllm.config.multimodal import BaseDummyOptions
+from vllm.forward_context import set_forward_context
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.models.interns1_vit import InternS1VisionModel
 from vllm.model_executor.models.module_mapping import MultiModelKeys
@@ -538,6 +539,7 @@ class InternS1ForConditionalGeneration(
 
         self.config = config
         self.multimodal_config = multimodal_config
+        self.vllm_config = vllm_config
 
         image_size = config.vision_config.image_size[0]
         patch_size = config.vision_config.patch_size[0]
@@ -604,7 +606,8 @@ class InternS1ForConditionalGeneration(
         return x
 
     def extract_feature(self, pixel_values: torch.Tensor) -> torch.Tensor:
-        vit_embeds = self.vision_tower(pixel_values=pixel_values)
+        with set_forward_context(None, self.vllm_config):
+            vit_embeds = self.vision_tower(pixel_values=pixel_values)
         vit_embeds = vit_embeds[:, 1:, :]
 
         h = w = int(vit_embeds.shape[1] ** 0.5)
